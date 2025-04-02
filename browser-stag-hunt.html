@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stag Hunt Strategy Game</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <style>
+    body {
+      background-color: #f9fafb;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, 
+        "Helvetica Neue", Arial, sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // Main Game Component
+    const StagHuntGame = () => {
+      // Game state
+      const [round, setRound] = useState(1);
+      const [maxRounds, setMaxRounds] = useState(10);
+      const [playerScore, setPlayerScore] = useState(0);
+      const [aiScore, setAiScore] = useState(0);
+      const [playerChoice, setPlayerChoice] = useState(null);
+      const [aiChoice, setAiChoice] = useState(null);
+      const [roundResult, setRoundResult] = useState('');
+      const [playerHistory, setPlayerHistory] = useState([]);
+      const [aiHistory, setAiHistory] = useState([]);
+      const [gameOver, setGameOver] = useState(false);
+      const [aiStrategy, setAiStrategy] = useState('adaptive'); // adaptive, cooperative, selfish
+      const [aiCooperationRate, setAiCooperationRate] = useState(0.7); // starting rate for adaptive AI
+      const [gameStarted, setGameStarted] = useState(false);
+      const [showRules, setShowRules] = useState(false);
+      const [showPayoffEditor, setShowPayoffEditor] = useState(false);
+      
+      // Default payoff matrix values
+      const defaultPayoffs = {
+        bothStag: [4, 4],     // Both hunt stag: big reward for both
+        playerStagAiHare: [0, 2],  // Player hunts stag, AI hunts hare: player gets nothing, AI gets moderate reward
+        playerHareAiStag: [2, 0],  // Player hunts hare, AI hunts stag: player gets moderate reward, AI gets nothing
+        bothHare: [1, 1]      // Both hunt hare: small reward for both
+      };
+      
+      const [payoffValues, setPayoffValues] = useState(defaultPayoffs);
+      
+      // Constructed payoff matrix from values
+      const payoffMatrix = {
+        stag: {
+          stag: payoffValues.bothStag,
+          hare: payoffValues.playerStagAiHare
+        },
+        hare: {
+          stag: payoffValues.playerHareAiStag,
+          hare: payoffValues.bothHare
+        }
+      };
+
+      const makeAiDecision = () => {
+        let choice;
+        
+        switch(aiStrategy) {
+          case 'cooperative':
+            // Always hunts stag
+            choice = 'stag';
+            break;
+          case 'selfish':
+            // Always hunts hare
+            choice = 'hare';
+            break;
+          case 'adaptive':
+            // Adjusts based on player's history
+            if (round === 1 || Math.random() < aiCooperationRate) {
+              choice = 'stag';
+            } else {
+              choice = 'hare';
+            }
+            break;
+          case 'tit-for-tat':
+            // Mimics player's last move (starts with stag)
+            if (round === 1) {
+              choice = 'stag';
+            } else {
+              choice = playerHistory[playerHistory.length - 1];
+            }
+            break;
+          default:
+            choice = Math.random() < 0.5 ? 'stag' : 'hare';
+        }
+        
+        return choice;
+      };
+
+      const updateAiStrategy = () => {
+        if (aiStrategy === 'adaptive' && playerHistory.length > 2) {
+          // Count how often the player has chosen stag in the last 3 rounds
+          const recentChoices = playerHistory.slice(-3);
+          const stagCount = recentChoices.filter(choice => choice === 'stag').length;
+          const cooperationRatio = stagCount / recentChoices.length;
+          
+          // Adjust AI cooperation rate based on player's recent behavior
+          setAiCooperationRate(0.3 + (cooperationRatio * 0.6));
+        }
+      };
+
+      const handlePlayerChoice = (choice) => {
+        if (gameOver) return;
+        
+        setPlayerChoice(choice);
+        const aiDecision = makeAiDecision();
+        setAiChoice(aiDecision);
+        
+        // Calculate points based on payoff matrix
+        const [playerPoints, aiPoints] = payoffMatrix[choice][aiDecision];
+        
+        setPlayerScore(prevScore => prevScore + playerPoints);
+        setAiScore(prevScore => prevScore + aiPoints);
+        
+        // Update histories
+        setPlayerHistory([...playerHistory, choice]);
+        setAiHistory([...aiHistory, aiDecision]);
+        
+        // Set round result text
+        let resultText = '';
+        if (choice === 'stag' && aiDecision === 'stag') {
+          resultText = `Both hunters caught the stag! (+${payoffMatrix.stag.stag[0]} points for you, +${payoffMatrix.stag.stag[1]} points for AI)`;
+        } else if (choice === 'stag' && aiDecision === 'hare') {
+          resultText = `You tried to catch the stag alone and failed, while the AI caught a hare. (+${payoffMatrix.stag.hare[0]} points for you, +${payoffMatrix.stag.hare[1]} points for AI)`;
+        } else if (choice === 'hare' && aiDecision === 'stag') {
+          resultText = `You caught a hare while the AI failed to catch the stag alone. (+${payoffMatrix.hare.stag[0]} points for you, +${payoffMatrix.hare.stag[1]} points for AI)`;
+        } else {
+          resultText = `Both hunters caught hares. (+${payoffMatrix.hare.hare[0]} point for you, +${payoffMatrix.hare.hare[1]} point for AI)`;
+        }
+        setRoundResult(resultText);
+        
+        // Delay updating to next round to allow player to see results
+        setTimeout(() => {
+          // Reset choice for next round
+          setPlayerChoice(null);
+          setAiChoice(null);
+          
+          // Check if game is over
+          if (round >= maxRounds) {
+            setGameOver(true);
+          } else {
+            setRound(round + 1);
+            updateAiStrategy();
+          }
+        }, 1500); // 1.5 second delay
+      };
+
+      const resetGame = () => {
+        setRound(1);
+        setPlayerScore(0);
+        setAiScore(0);
+        setPlayerChoice(null);
+        setAiChoice(null);
+        setRoundResult('');
+        setPlayerHistory([]);
+        setAiHistory([]);
+        setGameOver(false);
+        setAiCooperationRate(0.7);
+        setGameStarted(false);
+        setShowPayoffEditor(false);
+      };
+      
+      const startGame = (strategy, rounds) => {
+        setAiStrategy(strategy);
+        setMaxRounds(rounds);
+        setGameStarted(true);
+      };
+
+      const getGameSummary = () => {
+        if (playerScore > aiScore) {
+          return "Game over! You won!";
+        } else if (aiScore > playerScore) {
+          return "Game over! The AI won.";
+        } else {
+          return "Game over! It's a tie.";
+        }
+      };
+      
+      const handlePayoffChange = (scenario, player, value) => {
+        const numValue = parseInt(value) || 0;
+        setPayoffValues(prev => ({
+          ...prev,
+          [scenario]: player === 0 
+            ? [numValue, prev[scenario][1]] 
+            : [prev[scenario][0], numValue]
+        }));
+      };
+      
+      const resetPayoffs = () => {
+        setPayoffValues(defaultPayoffs);
+      };
+
+      // If not started, show welcome screen
+      if (!gameStarted) {
+        return (
+          <div className="flex flex-col items-center p-6 max-w-4xl mx-auto bg-gray-50 rounded-lg shadow-lg">
+            <h1 className="text-3xl font-bold mb-4 text-indigo-800">Stag Hunt Game</h1>
+            
+            <div className="w-full">
+              <div className="bg-white p-6 rounded-lg shadow-md mb-6">
+                <h2 className="text-xl font-semibold mb-4 text-indigo-700">Welcome to the Stag Hunt!</h2>
+                <p className="mb-4">
+                  The Stag Hunt is a classic game theory scenario. You and the AI are hunters who can either hunt a stag or a hare.
+                </p>
+                <p className="mb-4">
+                  Hunting a stag requires cooperation - if both of you choose to hunt the stag, you'll both get a big reward (4 points).
+                  But if one hunter goes for the stag while the other hunts a hare, the stag hunter gets nothing (0 points).
+                </p>
+                <p className="mb-4">
+                  Hunting a hare is safer - you'll get a small reward (1 point) if both hunt hares, or a moderate reward (2 points)
+                  if you hunt a hare while the other hunter tries for the stag.
+                </p>
+                <button 
+                  onClick={() => setShowRules(!showRules)} 
+                  className="text-indigo-600 hover:text-indigo-800 font-medium mb-4"
+                >
+                  {showRules ? 'Hide detailed rules' : 'Show detailed rules'}
+                </button>
+                
+                {showRules && (
+                  <div className="bg-indigo-50 p-4 rounded-lg mb-4">
+                    <h3 className="font-semibold mb-2">Current Payoff Matrix:</h3>
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full border-collapse mb-4">
+                        <thead>
+                          <tr>
+                            <th className="p-2 border"></th>
+                            <th className="p-2 border">AI hunts Stag</th>
+                            <th className="p-2 border">AI hunts Hare</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <tr>
+                            <th className="p-2 border">You hunt Stag</th>
+                            <td className="p-2 border">You: +{payoffValues.bothStag[0]}, AI: +{payoffValues.bothStag[1]}</td>
+                            <td className="p-2 border">You: +{payoffValues.playerStagAiHare[0]}, AI: +{payoffValues.playerStagAiHare[1]}</td>
+                          </tr>
+                          <tr>
+                            <th className="p-2 border">You hunt Hare</th>
+                            <td className="p-2 border">You: +{payoffValues.playerHareAiStag[0]}, AI: +{payoffValues.playerHareAiStag[1]}</td>
+                            <td className="p-2 border">You: +{payoffValues.bothHare[0]}, AI: +{payoffValues.bothHare[1]}</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </div>
+                    <h3 className="font-semibold mb-2">AI Personalities:</h3>
+                    <ul className="list-disc list-inside mb-4 space-y-1">
+                      <li><strong>Cooperative:</strong> Always hunts the stag, hoping for cooperation</li>
+                      <li><strong>Selfish:</strong> Always hunts the hare, playing it safe</li>
+                      <li><strong>Adaptive:</strong> Adjusts strategy based on your past choices</li>
+                      <li><strong>Tit-for-Tat:</strong> Mimics your previous move</li>
+                    </ul>
+                  </div>
+                )}
+              </div>
+              
+              <div className="bg-white p-6 rounded-lg shadow-md mb-6">
+                <h2 className="text-xl font-semibold mb-4 text-indigo-700">Game Settings</h2>
+                <div className="mb-4">
+                  <p className="mb-2 font-medium">Choose AI Strategy:</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <button 
+                      onClick={() => startGame('cooperative', maxRounds)} 
+                      className="p-2 bg-blue-100 hover:bg-blue-200 rounded border border-blue-300"
+                    >
+                      Cooperative AI
+                    </button>
+                    <button 
+                      onClick={() => startGame('selfish', maxRounds)} 
+                      className="p-2 bg-red-100 hover:bg-red-200 rounded border border-red-300"
+                    >
+                      Selfish AI
+                    </button>
+                    <button 
+                      onClick={() => startGame('adaptive', maxRounds)} 
+                      className="p-2 bg-purple-100 hover:bg-purple-200 rounded border border-purple-300"
+                    >
+                      Adaptive AI
+                    </button>
+                    <button 
+                      onClick={() => startGame('tit-for-tat', maxRounds)} 
+                      className="p-2 bg-green-100 hover:bg-green-200 rounded border border-green-300"
+                    >
+                      Tit-for-Tat AI
+                    </button>
+                  </div>
+                </div>
+                <div className="mb-4">
+                  <p className="mb-2 font-medium">Number of Rounds:</p>
+                  <div className="flex space-x-2">
+                    <button 
+                      onClick={() => setMaxRounds(5)} 
+                      className={`p-2 rounded border ${maxRounds === 5 ? 'bg-indigo-200 border-indigo-400' : 'bg-gray-100 border-gray-300 hover:bg-gray-200'}`}
+                    >
+                      5 Rounds
+                    </button>
+                    <button 
+                      onClick={() => setMaxRounds(10)} 
+                      className={`p-2 rounded border ${maxRounds === 10 ? 'bg-indigo-200 border-indigo-400' : 'bg-gray-100 border-gray-300 hover:bg-gray-200'}`}
+                    >
+                      10 Rounds
+                    </button>
+                    <button 
+                      onClick={() => setMaxRounds(15)} 
+                      className={`p-2 rounded border ${maxRounds === 15 ? 'bg-indigo-200 border-indigo-400' : 'bg-gray-100 border-gray-300 hover:bg-gray-200'}`}
+                    >
+                      15 Rounds
+                    </button>
+                  </div>
+                </div>
+                
+                <div className="mt-6">
+                  <button 
+                    onClick={() => setShowPayoffEditor(!showPayoffEditor)} 
+                    className="w-full py-2 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-lg"
+                  >
+                    {showPayoffEditor ? 'Hide Payoff Editor' : 'Customize Payoff Matrix'}
+                  </button>
+                </div>
+              </div>
+              
+              {showPayoffEditor && (
+                <div className="bg-white p-6 rounded-lg shadow-md">
+                  <h2 className="text-xl font-semibold mb-4 text-indigo-700">Customize Payoff Matrix</h2>
+                  <p className="mb-4 text-gray-600">Set the points earned in each scenario:</p>
+                  
+                  <div className="grid grid-cols-1 gap-4 mb-6">
+                    <div className="border rounded-lg p-4 bg-blue-50">
+                      <h3 className="font-medium mb-2">Both Hunt Stag:</h3>
+                      <div className="flex items-center mb-2">
+                        <label className="w-24">Your Points:</label>
+                        <input 
+                          type="number" 
+                          value={payoffValues.bothStag[0]}
+                          onChange={(e) => handlePayoffChange('bothStag', 0, e.target.value)}
+                          className="border rounded p-1 w-16"
+                        />
+                      </div>
+                      <div className="flex items-center">
+                        <label className="w-24">AI Points:</label>
+                        <input 
+                          type="number" 
+                          value={payoffValues.bothStag[1]}
+                          onChange={(e) => handlePayoffChange('bothStag', 1, e.target.value)}
+                          className="border rounded p-1 w-16"
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="border rounded-lg p-4 bg-red-50">
+                      <h3 className="font-medium mb-2">You Hunt Stag, AI Hunts Hare:</h3>
+                      <div className="flex items-center mb-2">
+                        <label className="w-24">Your Points:</label>
+                        <input 
+                          type="number" 
+                          value={payoffValues.playerStagAiHare[0]}
+                          onChange={(e) => handlePayoffChange('playerStagAiHare', 0, e.target.value)}
+                          className="border rounded p-1 w-16"
+                        />
+                      </div>
+                      <div className="flex items-center">
+                        <label className="w-24">AI Points:</label>
+                        <input 
+                          type="number" 
+                          value={payoffValues.playerStagAiHare[1]}
+                          onChange={(e) => handlePayoffChange('playerStagAiHare', 1, e.target.value)}
+                          className="border rounded p-1 w-16"
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="border rounded-lg p-4 bg-green-50">
+                      <h3 className="font-medium mb-2">You Hunt Hare, AI Hunts Stag:</h3>
+                      <div className="flex items-center mb-2">
+                        <label className="w-24">Your Points:</label>
+                        <input 
+                          type="number" 
+                          value={payoffValues.playerHareAiStag[0]}
+                          onChange={(e) => handlePayoffChange('playerHareAiStag', 0, e.target.value)}
+                          className="border rounded p-1 w-16"
+                        />
+                      </div>
+                      <div className="flex items-center">
+                        <label className="w-24">AI Points:</label>
+                        <input 
+                          type="number" 
+                          value={payoffValues.playerHareAiStag[1]}
+                          onChange={(e) => handlePayoffChange('playerHareAiStag', 1, e.target.value)}
+                          className="border rounded p-1 w-16"
+                        />
+                      </div>
+                    </div>
+                    
+                    <div className="border rounded-lg p-4 bg-purple-50">
+                      <h3 className="font-medium mb-2">Both Hunt Hare:</h3>
+                      <div className="flex items-center mb-2">
+                        <label className="w-24">Your Points:</label>
+                        <input 
+                          type="number" 
+                          value={payoffValues.bothHare[0]}
+                          onChange={(e) => handlePayoffChange('bothHare', 0, e.target.value)}
+                          className="border rounded p-1 w-16"
+                        />
+                      </div>
+                      <div className="flex items-center">
+                        <label className="w-24">AI Points:</label>
+                        <input 
+                          type="number" 
+                          value={payoffValues.bothHare[1]}
+                          onChange={(e) => handlePayoffChange('bothHare', 1, e.target.value)}
+                          className="border rounded p-1 w-16"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="flex justify-end">
+                    <button 
+                      onClick={resetPayoffs} 
+                      className="py-2 px-4 bg-gray-200 hover:bg-gray-300 rounded font-medium mr-2"
+                    >
+                      Reset to Default
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="flex flex-col items-center p-6 max-w-4xl mx-auto bg-gray-50 rounded-lg shadow-lg">
+          <h1 className="text-3xl font-bold mb-4 text-indigo-800">Stag Hunt Game</h1>
+          
+          <div className="w-full">
+            <div className="flex justify-between mb-6">
+              <div className="bg-blue-100 p-3 rounded-lg border border-blue-300 text-center w-32">
+                <p className="font-bold text-lg">Round</p>
+                <p className="text-xl">{round} / {maxRounds}</p>
+              </div>
+              <div className="bg-green-100 p-3 rounded-lg border border-green-300 text-center w-32">
+                <p className="font-bold text-lg">Your Score</p>
+                <p className="text-xl">{playerScore}</p>
+              </div>
+              <div className="bg-purple-100 p-3 rounded-lg border border-purple-300 text-center w-32">
+                <p className="font-bold text-lg">AI Score</p>
+                <p className="text-xl">{aiScore}</p>
+              </div>
+            </div>
+            
+            {!gameOver ? (
+              <div className="bg-white p-6 rounded-lg shadow-md mb-6">
+                <h2 className="text-xl font-semibold mb-4 text-indigo-700">
+                  Make Your Choice for Round {round}
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                  <button
+                    onClick={() => handlePlayerChoice('stag')}
+                    className="p-4 bg-indigo-100 hover:bg-indigo-200 rounded-lg border border-indigo-300 flex flex-col items-center transition-all hover:scale-105"
+                    disabled={playerChoice !== null}
+                  >
+                    <span className="text-2xl mb-2">🦌</span>
+                    <span className="font-medium text-lg">Hunt Stag</span>
+                    <span className="text-sm text-gray-600">High risk, high reward</span>
+                  </button>
+                  <button
+                    onClick={() => handlePlayerChoice('hare')}
+                    className="p-4 bg-amber-100 hover:bg-amber-200 rounded-lg border border-amber-300 flex flex-col items-center transition-all hover:scale-105"
+                    disabled={playerChoice !== null}
+                  >
+                    <span className="text-2xl mb-2">🐇</span>
+                    <span className="font-medium text-lg">Hunt Hare</span>
+                    <span className="text-sm text-gray-600">Safe, low reward</span>
+                  </button>
+                </div>
+                
+                {playerChoice && (
+                  <div className="bg-indigo-50 p-4 rounded-lg">
+                    <p className="font-medium mb-2">Round {round} Results:</p>
+                    <p>You chose to hunt the {playerChoice === 'stag' ? 'stag 🦌' : 'hare 🐇'}</p>
+                    <p>The AI chose to hunt the {aiChoice === 'stag' ? 'stag 🦌' : 'hare 🐇'}</p>
+                    <p className="mt-2">{roundResult}</p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="bg-white p-6 rounded-lg shadow-md mb-6">
+                <h2 className="text-xl font-semibold mb-4 text-indigo-700">{getGameSummary()}</h2>
+                <p className="mb-4">
+                  Final Score - You: {playerScore}, AI: {aiScore}
+                </p>
+                <button
+                  onClick={resetGame}
+                  className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg"
+                >
+                  Play Again
+                </button>
+              </div>
+            )}
+            
+            <div className="bg-white p-6 rounded-lg shadow-md">
+              <h2 className="text-xl font-semibold mb-4 text-indigo-700">Game History</h2>
+              {playerHistory.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full border-collapse">
+                    <thead>
+                      <tr>
+                        <th className="p-2 border">Round</th>
+                        <th className="p-2 border">Your Choice</th>
+                        <th className="p-2 border">AI Choice</th>
+                        <th className="p-2 border">Your Points</th>
+                        <th className="p-2 border">AI Points</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {playerHistory.map((choice, index) => {
+                        const playerRoundPoints = payoffMatrix[choice][aiHistory[index]][0];
+                        const aiRoundPoints = payoffMatrix[choice][aiHistory[index]][1];
+                        return (
+                          <tr key={index}>
+                            <td className="p-2 border text-center">{index + 1}</td>
+                            <td className="p-2 border text-center">{choice === 'stag' ? '🦌 Stag' : '🐇 Hare'}</td>
+                            <td className="p-2 border text-center">{aiHistory[index] === 'stag' ? '🦌 Stag' : '🐇 Hare'}</td>
+                            <td className="p-2 border text-center">+{playerRoundPoints}</td>
+                            <td className="p-2 border text-center">+{aiRoundPoints}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="text-gray-500 italic">No rounds played yet.</p>
+              )}
+            </div>
+            
+            {!gameOver && (
+              <div className="mt-6 flex justify-center">
+                <button
+                  onClick={resetGame}
+                  className="py-2 px-4 bg-gray-200 hover:bg-gray-300 rounded font-medium"
+                >
+                  Reset Game
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    };
+
+    // Render the main app component to the DOM
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<StagHuntGame />);
+  </script>
+</body>
+</html>
